@@ -1,0 +1,1938 @@
+/*
+*Final w/ alterations as well as cleaned code
+* Created: 5/27/2013 8:24:10 AM
+*  Author: Patrick Smith
+*/
+
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <TimerALT.h>
+#include <bit.h>
+/*
+*These are my twelve states
+*the original number of states was 16
+*I reduced four of the states to fit into one
+*now the enemy movement state controls all of the enemies
+*instead of  just one
+**/
+enum shoot_noise_states{wait_input, shoot_noise, pause_shoot_noise}shoot_noise_state;
+enum LedWriteStates{initLED, write_blue,secondB, write_green, secondG, writeShoot, writeShoot2, writeshoot_E, writeshoot_E2, display_win, display_lose, clearLED} LedWriteState;
+enum shoot_States{wait_s, shoot1, shoot2, shoot3, shoot4, shoot5, shoot6, shoot7, shoot8, shoot9, shoot10, shoot11, shoot12, shoot13, shoot14, shoot15, shoot16 } shoot_State;
+enum enemymovmtstates{wait_e, gen_position,start_movement, value_check, move, gen_position2, start_movement2, value_check2, move2, gen_position3 , start_movement3, value_check3, move3 , kill_game} enemymovmtstate;
+enum Movmt_States{init, wait, inc, dec, butn_rel, shoot, kill_game2} Movmt_State;
+enum enemy_shoot_detect_states{wait_Butn, detect} enemy_shoot_detect_state;
+enum enemy_generate_shot_states{waitbutton, generate_rand, check_val, generate_shot, kill_game3} enemy_generate_shot_state;
+enum enemy_shoot_states{ wait_Es, shoot1_E, shoot2_E, shoot3_E, shoot4_E, shoot5_E, shoot6_E, shoot7_E, shoot8_E, shoot9_E, shoot10_E, shoot11_E, shoot12_E, shoot13_E, shoot14_E, shoot15_E, kill_game4} enemy_shoot_state;
+enum LT_States { LT_s0, LT_WaitLcdRdy, LT_WaitButton, LT_FillAndDispString, LT_HoldGo1, LT_WaitBtnRelease, LT_FillAndDispString2, LT_WaitLcdRdy2, LT_FillAndDispString3, LT_WaitLcdRdy3, LT_FillAndDispString4, LT_WaitLcdRdy4 } LT_State;
+enum LI_States { LI_Init1, LI_Init2, LI_Init3, LI_Init4, LI_Init5, LI_Init6, LI_WaitDisplayString, LI_Clr, LI_PositionCursor, LI_DisplayChar, LI_WaitGo0 } LI_State;
+enum Check_Player_States{wait_butn2, detect2} Check_Player_state;
+enum Opening_display_states{ row1, row2, row3, row4, row5, row6, row7, row8,disable, kill}Opening_display_state;
+enum music_states{initm,opening_music, opening_play, opening_pause, let_go, play, pause1}music_state;
+
+
+
+
+unsigned char *LCD_Data = &PORTA;  // LCD 8-bit data bus
+unsigned char *LCD_Ctrl = &PORTD;	// LCD needs 2-bits for control, use port B
+const unsigned char LCD_RS = 4;	 // LCD Reset pin is PB3
+const unsigned char LCD_E = 5;	 // LCD Enable pin is PB4
+
+unsigned char LCD_rdy_g = 0; // Set by LCD interface synchSM, ready to display new string
+unsigned char LCD_go_g = 0; // Set by user synchSM wishing to display string in LCD_string_g
+unsigned char LCD_string_g[17]; // Filled by user synchSM, 16 chars plus end-of-string char
+volatile unsigned char system_reset = 0;  //Flag which resets entire system
+volatile unsigned char x, t3; //generic counters
+volatile unsigned char arraypatBOSS[33] = {0x00, 0x00, 0x02, 0x00, 0xBC, 0x00, 0x6C, 0x00, 0x7C, 0x00, 0x6C, 0x00, 0xBC, 0x00, 0x02, 0x00, 0x00, 0x00, 0x42, 0x00, 0x3C, 0x00, 0x2F,0x00, 0x2F, 0x00, 0x3C, 0x00, 0x42, 0x00, 0x00, 0x00};
+volatile unsigned char arraypatLOSE[33] = {0x00, 0x00, 0x7C, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x7C, 0x00, 0x44, 0x00, 0x7C, 0x00, 0x00, 0x00, 0x74, 0x00, 0x54, 0x00, 0x5C, 0x00, 0x00, 0x00, 0x7C, 0x00, 0x54, 0x00, 0x54, 0x00};
+volatile unsigned char arraypatWIN[33] = {0x00, 0x00, 0x38, 0x00, 0x04, 0x00, 0x38,0x00, 0x04, 0x00,0x38,0x00, 0x00, 0x00, 0x24, 0x00, 0x3C, 0x00, 0x24, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x10, 0x00, 0x08, 0x00, 0x3C, 0x00, 0x00, 0x00};
+volatile unsigned char arraypatUFO[33] = {0x00,0x00, 0x00, 0x00,0x3C,0x00, 0x04,0x00, 0x3C, 0x00,0x00,0x00, 0x3C,0x00, 0x28,0x00, 0x28,0x00, 0x00,0x00, 0x3C,0x00, 0x24,0x00, 0x3C,0x00, 0x00,0x00, 0x00,0x00, 0x00, 0x00};
+volatile unsigned long arraycol[33] = {0x7FFF, 0xFFFF, 0xBFFF, 0xFFFF, 0xDFFF, 0xFFFF, 0xEFFF, 0xFFFF, 0xF7FF, 0xFFFF, 0xFBFF, 0xFFFF, 0xFDFF, 0xFFFF, 0xFEFF, 0xFFFF, 0xFF7F, 0xFFFF, 0xFFBF, 0xFFFF, 0xFFDF, 0xFFFF, 0xFFEF, 0xFFFF, 0xFFF7, 0xFFFF, 0xFFFB, 0xFFFF, 0xFFFD, 0xFFFF, 0xFFFE, 0xFFFF};
+volatile unsigned long arraycol_Boss[33] = {0x7FFFF, 0xFFFFF, 0xBFFFF, 0xFFFFF, 0xDFFFF, 0xFFFFF, 0xEFFFF, 0xFFFFF, 0xF7FFF, 0xFFFFF, 0xFBFFF, 0xFFFFF, 0xFDFFF, 0xFFFFF, 0xFEFFF, 0xFFFFF, 0xFF7FF, 0xFFFFF, 0xFFBFF, 0xFFFFF, 0xFFDFF, 0xFFFFF, 0xFFEFF, 0xFFFFF, 0xFFF7F, 0xFFFFF, 0xFFFBF, 0xFFFFF, 0xFFFDF, 0xFFFFF, 0xFFFEF, 0xFFFFF};
+volatile unsigned short reset_cntr; // controls how long it takes before you can reset
+volatile unsigned char shot_flag;   //flag controls if an enemy shot can be fired
+volatile unsigned char cntr_LED;    //
+volatile unsigned char point_health_flag;
+volatile double music_temp;
+volatile unsigned long TempCols;
+volatile unsigned char TempRow;	 //position of row element
+volatile unsigned long TempCol;	 //position of column element
+volatile unsigned long tempcol_lock;//holds column position in shoot state
+volatile unsigned char temprow_lock;
+volatile unsigned char temprows_E;
+volatile unsigned char temprow_lock_E;
+volatile unsigned char shoot_g = 0;	 //global variable which enables shoot sm
+volatile unsigned char shoot_val_g;	// keeps track of shootval to see if an enemy is hit
+unsigned char temprow_E;   //enemy row position
+volatile unsigned long tempCol_E;   //enemy1 column position
+volatile unsigned short tempCol_E1;   //enemy2 column position
+volatile unsigned char z  = 0;
+volatile unsigned long TempCols_E;
+volatile unsigned char temprows;
+volatile unsigned char enemyshot;
+volatile unsigned char t4, t5, d;
+volatile unsigned char cntshot;
+volatile unsigned char randnum;
+volatile unsigned char shootval_E;
+volatile unsigned char music_cnt;
+volatile unsigned char music_cnt2;
+volatile unsigned short music_cntr5;
+volatile unsigned char LEDcnt;
+volatile char points = 0;
+volatile char health = 3;
+volatile unsigned char t;
+volatile unsigned char enemy_change1;  //flag changes enemy to two characters
+volatile unsigned char enemy_change2;  //flag changes enemy to final character
+volatile unsigned char game_kill_flag; //disables certain display
+volatile unsigned char opening_notes[3] = {33, 17, 25};
+volatile unsigned char music_cnt3;
+volatile unsigned char music_cnt4;    //controls speed of music play for opening notes
+volatile unsigned char Notes[16] = {5, 5, 3, 13, 11, 11, 13, 15, 9, 9, 19, 25, 33, 13, 15, 15};
+volatile unsigned char freq;        //writes to PD7
+volatile unsigned long music_tempo; //Controls the speed of the music
+volatile unsigned char boss_flag;   //used for enabling boss character
+volatile unsigned char i;
+volatile unsigned long display_timer;
+
+
+// controls all of the display to the LED matrix
+
+void tick_SoundFX(){
+  switch(shoot_noise_state){
+     case -1:
+        shoot_noise_state = wait_input;
+        break;
+    case wait_input:
+        if(GetBit (PIND, 1) == 0){
+           shoot_noise_state = shoot_noise;
+
+        }else{
+           shoot_noise_state = wait_input;
+        }
+        break;
+    case shoot_noise:
+        if(music_cntr5 >= 75){
+           shoot_noise_state = wait_input;
+           music_cntr5 =0;
+        }else{
+           shoot_noise_state = pause_shoot_noise;
+        }
+        break;
+    case pause_shoot_noise:
+        shoot_noise_state = shoot_noise;
+        music_cntr5++;
+        break;
+
+  }
+     switch(shoot_noise_state){
+           case wait_input:
+              break;
+           case shoot_noise:
+              PORTD |= SetBit (PORTD, 6, 1);
+              break;
+           case pause_shoot_noise:
+              PORTD = SetBit (PORTD, 6, 0);
+              break;
+           default:
+              shoot_noise_state = wait_input;
+
+
+
+
+     }
+
+  };
+
+void tick_LED(){
+switch(LedWriteState){
+case -1:
+LedWriteState = initLED;   //displays opening sequence until button press
+t = 0;
+  break;
+case initLED:
+     //when button pressed begins game display
+if((GetBit(PIND, 3) == 0)){
+LedWriteState = write_blue;
+system_reset = 0;
+
+}else{
+if(t<33){
+LedWriteState = initLED;
+t++;
+if(t>=33){
+t = 0;
+}
+}else{
+LedWriteState =initLED;
+t = 0;
+}
+}
+
+  break;
+case write_blue:
+if(game_kill_flag){
+LedWriteState = clearLED;
+}else{
+LedWriteState = secondB;
+}
+
+  break;
+case secondB:
+if(game_kill_flag){
+LedWriteState = clearLED;
+}else{
+LedWriteState = writeShoot;
+}
+  break;
+case write_green:
+if(game_kill_flag){
+LedWriteState = clearLED;
+}else{
+LedWriteState = secondG;
+}
+  break;
+case secondG:
+if(game_kill_flag){
+LedWriteState = clearLED;
+}else{
+LedWriteState = writeshoot_E;
+}
+  break;
+case writeShoot:
+if(game_kill_flag){
+
+           LedWriteState = clearLED;
+}else{
+LedWriteState = writeShoot2;
+}
+  break;
+case writeShoot2:
+if(game_kill_flag){
+LedWriteState = clearLED;
+}else{
+LedWriteState = write_green;
+}
+  break;
+case writeshoot_E:
+if(game_kill_flag){
+LedWriteState = clearLED;
+}else{
+LedWriteState = writeshoot_E2;
+}
+        break;
+case writeshoot_E2:
+if(game_kill_flag){
+LedWriteState = clearLED;
+}else{
+LedWriteState = write_blue;
+}
+        break;
+     case clearLED:
+        if(points == 12){
+           LedWriteState = display_win;
+           reset_cntr = 0;
+           boss_flag = 1;
+        }else if(health == 0){
+           LedWriteState = display_lose;
+           reset_cntr = 0;
+        }
+        break;
+case display_lose:
+if(t<33){
+if(reset_cntr == 5000){
+LedWriteState = initLED;
+system_reset = 1;
+reset_cntr = 0;
+}else{
+LedWriteState = display_lose;
+t++;
+if(t>=33){
+t = 0;
+}
+}
+
+}else{
+
+if(reset_cntr == 5000){
+LedWriteState = initLED;
+system_reset = 1;
+reset_cntr= 0;
+}else{
+LedWriteState = display_lose;
+t = 0;
+}
+}
+break;
+case display_win:
+if(t<33){
+LedWriteState = display_win;
+if(reset_cntr == 5000){
+LedWriteState = initLED;
+system_reset = 1;
+reset_cntr = 0;
+}else{
+t++;
+if(t>=33){
+t = 0;
+}
+}
+}else{
+if(reset_cntr == 5000){
+LedWriteState = initLED;
+system_reset = 1;
+reset_cntr = 0;
+}else{
+LedWriteState = display_win;
+t = 0;
+}
+
+}
+break;
+
+}
+switch(LedWriteState){
+case initLED:
+transmit_data_FOR_DISPLAY(arraypatBOSS, arraycol);
+//transmit_data_FOR_BOSS(arraypatBOSS, arraycol_Boss);
+break;
+case write_blue:
+transmit_data(TempCol);
+transmit_data1(0xFFFFFFFF);
+transmit_data2(TempRow);
+break;
+case secondB:
+transmit_data(0xFFFFFFFF);
+transmit_data1(0xFFFFFFFF);
+transmit_data2(0x00);
+break;
+case write_green:
+transmit_data(0xFFFFFFFF);
+transmit_data1(tempCol_E);
+transmit_data2(temprow_E);
+break;
+case secondG:
+transmit_data(0xFFFFFFFF);
+transmit_data1(0xFFFFFFFF);
+transmit_data2(0x00);
+break;
+case writeShoot:
+transmit_data(TempCols);
+transmit_data1(0xFFFFFFFF);
+transmit_data2(temprow_lock);
+break;
+case writeShoot2:
+transmit_data(0xFFFFFFFF);
+transmit_data1(0xFFFFFFFF);
+transmit_data2(0x00);
+break;
+case writeshoot_E:
+transmit_data(0xFFFFFFFF);
+transmit_data1(TempCols_E);
+transmit_data2(temprow_E);
+break;
+case writeshoot_E2:
+transmit_data(0xFFFFFFFF);
+transmit_data1(0xFFFFFFFF);
+transmit_data2(0x00);
+     break;
+  case clearLED:
+        transmit_data(0xFFFFFFFF);
+        transmit_data1(0xFFFFFFFF);
+        transmit_data2(0x00);
+        break;
+case display_lose:
+++reset_cntr;
+transmit_data_FOR_DISPLAY(arraypatLOSE, arraycol);
+break;
+case display_win:
+++reset_cntr;
+transmit_data_FOR_DISPLAY(arraypatWIN, arraycol);
+break;
+
+
+}
+}
+
+//Plays all of the music before and during gameplay
+void music_tick(){
+switch (music_state)
+{
+case -1:
+music_state = initm;
+break;
+case initm:
+i = 0;
+if(system_reset){
+music_state = initm;
+}else if(GetBit(PIND, 3)==0){
+music_state = let_go;
+
+}else{
+music_state = opening_play;
+
+}
+break;
+case opening_play:
+if(GetBit(PIND,3 )==0){
+music_state = let_go;
+}else{
+if(music_cnt4 == 250){
+music_state = opening_pause;
+}else{
+music_state = opening_play;
+}
+
+}
+break;
+case opening_pause:
+if(GetBit(PIND, 3)==0){
+music_state = let_go;
+
+
+}else{
+if(music_cnt4 == 250){
+++i;
+if(i == 3){
+i = 0;
+}
+music_state = opening_play;
+}else{
+music_state = opening_pause;
+}
+
+}
+break;
+case let_go:
+if(system_reset){
+music_state = initm;
+i = 0;
+}else if(GetBit(PIND, 3)){
+music_state = play;
+}else{
+music_state = let_go;
+
+}
+break;
+case play:
+if(system_reset){
+music_state = initm;
+i = 0;
+}else if(music_tempo == 60){
+music_state = pause1;
+music_tempo = 0;
+++i;
+if(i == 16){
+i = 0;
+}
+}else{
+music_state = play;
+
+}
+break;
+case pause1:
+if(system_reset){
+music_state = initm;
+i = 0;
+}else if(music_tempo == 100){
+music_state = play;
+music_tempo = 0;
+
+}else{
+music_state = pause1;
+
+}
+break;
+}
+switch(music_state){
+case initm:
+freq = 0;
+break;
+case opening_play:
+++music_cnt4;
+freq = opening_notes[i];
+break;
+case opening_pause:
+++music_cnt4;
+freq =  0;
+case let_go:
+break;
+case play:
+freq = Notes[i];
+music_tempo++;
+break;
+case pause1:
+freq = 0;
+music_tempo++;
+break;
+default:
+music_state = init;
+break;
+}
+}
+
+//controls the player movement
+//also enables the player to shoot
+void Tick_Move(){
+switch(Movmt_State){
+case -1:
+  Movmt_State = init;
+  break;
+case init:
+  if(GetBit(PIND, 3) == 0){
+  Movmt_State = wait;
+  TempRow = 0x08;
+  }else{
+  Movmt_State = init;
+  }
+  break;
+case wait:
+        if(game_kill_flag && (health == 0 || points ==12)){
+           Movmt_State = kill_game2;
+           TempRow = 0x00;
+           TempCol = 0xFFFFFFFF;
+        }else if(GetBit(PIND, 0) == 0  && !(TempRow == 0x01)){
+  Movmt_State = inc;
+  }else if(GetBit(PIND, 2) == 0 && !(TempRow == 0x80) ){
+  Movmt_State = dec;
+  }else if(GetBit(PIND, 1)==0){
+  Movmt_State = shoot;
+  }else{
+  Movmt_State = wait;
+  }
+  break;
+case inc:
+  Movmt_State = butn_rel;
+  break;
+case dec:
+  Movmt_State = butn_rel;
+  break;
+  case butn_rel:
+  if(GetBit(PIND, 0) == 0 || GetBit(PIND, 2) == 0|| GetBit(PIND, 1) == 0){
+  Movmt_State = butn_rel;
+  }else{
+  Movmt_State = wait;
+  }
+  break;
+case shoot:
+  Movmt_State = butn_rel;
+  break;
+     case kill_game2:
+  if(system_reset){
+    Movmt_State = init;
+  }else{
+    Movmt_State = kill_game2;
+  }
+        break;
+
+}
+switch(Movmt_State){
+case init:
+  break;
+case wait:
+  TempCol = 0xFFFF7FFF;
+  break;
+case inc:
+  TempCol = 0xFFFF7FFF;
+  TempRow = TempRow >> 1;
+  break;
+case dec:
+  TempCol = 0xFFFF7FFF;
+  TempRow = TempRow << 1;
+  break;
+case butn_rel:
+  shoot_g = 0;
+  break;
+case shoot:
+  temprow_lock = TempRow;
+  shoot_g = 1;
+  break;
+     case kill_game2:
+        break;
+default:
+  Movmt_State = wait;
+  break;
+
+
+}
+
+}
+
+//generates the speed at which the enemy can shoot
+void tick_enemy_Gen_Shot(){
+
+switch(enemy_generate_shot_state){
+case -1:
+enemy_generate_shot_state = waitbutton;
+break;
+case waitbutton:
+enemyshot = 0;
+if(game_kill_flag){
+enemymovmtstate = kill_game3;
+temprow_E = 0x00;
+tempCol_E = 0xFFFFFFFF;
+TempCols_E = 0xFFFFFFFF;
+}else if(GetBit(PIND, 3)==0){
+enemy_generate_shot_state = generate_rand;
+}else{
+enemy_generate_shot_state = waitbutton;
+}
+break;
+case generate_rand:
+ if(game_kill_flag){
+enemymovmtstate = kill_game3;
+temprow_E = 0x00;
+tempCol_E = 0xFFFFFFFF;
+TempCols_E = 0xFFFFFFFF;
+ }else{
+enemy_generate_shot_state = check_val;
+cntshot = 0;
+ }
+break;
+case check_val:
+ if(game_kill_flag){
+enemymovmtstate = kill_game3;
+temprow_E = 0x00;
+tempCol_E = 0xFFFFFFFF;
+TempCols_E = 0xFFFFFFFF;
+ }else if(cntshot < randnum){
+enemy_generate_shot_state = check_val;
+
+}else{
+enemy_generate_shot_state = generate_shot;
+cntshot = 0;
+}
+break;
+case generate_shot:
+ if(game_kill_flag){
+enemymovmtstate = kill_game3;
+temprow_E = 0x00;
+tempCol_E = 0xFFFFFFFF;
+TempCols_E = 0xFFFFFFFF;
+ }else{
+enemy_generate_shot_state = generate_rand;
+ }
+break;
+     case kill_game3:
+        enemy_generate_shot_state = kill_game3;
+        break;
+}
+switch (enemy_generate_shot_state){
+case waitbutton:
+break;
+case generate_rand:
+ if(enemy_change2){
+randnum = rand()%60;
+ }else if(enemy_change1){
+  randnum = rand()%60;
+ }else if(boss_flag){
+ randnum = rand()%40;
+}else{
+randnum = rand()%90;
+ }
+enemyshot = 0;
+break;
+case check_val:
+enemyshot = 0;
+cntshot++;
+break;
+case generate_shot:
+enemyshot = 1;
+temprow_lock_E = temprow_E;
+cntshot = 0;
+break;
+case kill_game3:
+break;
+default:
+enemy_generate_shot_state = waitbutton;
+break;
+
+
+}
+}
+
+
+//controls the shooting display on the LEd matrix
+void tick_enemy_shot(){
+switch(enemy_shoot_state){
+case -1:
+  enemy_shoot_state = wait_Es;
+  break;
+case wait_Es:
+  temprows_E = 0x00;
+  TempCols_E = 0xFFFFFFFF;
+   if(game_kill_flag && (health ==0 || points ==12)){
+     enemy_shoot_state = kill_game4;
+     temprows_E = 0x00;
+     temprow_E = 0x00;
+     tempCol_E = 0xFFFFFFFF;
+     TempCols_E = 0xFFFFFFFF;
+    }
+
+  if(enemyshot == 0){
+  enemy_shoot_state = wait_Es;
+  }else{
+  enemy_shoot_state = shoot1_E;
+  }
+  break;
+case shoot1_E:
+enemy_shoot_state = shoot2_E;
+  break;
+case shoot2_E:
+enemy_shoot_state = shoot3_E;
+  break;
+case shoot3_E:
+enemy_shoot_state = shoot4_E;
+  break;
+case shoot4_E:
+  enemy_shoot_state = shoot5_E;
+  break;
+case shoot5_E:
+enemy_shoot_state = shoot6_E;
+  break;
+case shoot6_E:
+enemy_shoot_state = shoot7_E;
+  break;
+case shoot7_E:
+enemy_shoot_state = shoot8_E;
+  break;
+case shoot8_E:
+enemy_shoot_state = shoot9_E;
+  break;
+case shoot9_E:
+enemy_shoot_state = shoot10_E;
+  break;
+case shoot10_E:
+enemy_shoot_state = shoot11_E;
+  break;
+case shoot11_E:
+enemy_shoot_state = shoot12_E;
+  break;
+case shoot12_E:
+enemy_shoot_state = shoot13_E;
+  break;
+case shoot13_E:
+enemy_shoot_state = shoot14_E;
+  break;
+case shoot14_E:
+enemy_shoot_state = shoot15_E;
+  break;
+case shoot15_E:
+  enemy_shoot_state = wait_Es;
+        break;
+     case kill_game4:
+        enemy_shoot_state = kill_game4;
+  break;
+}
+switch(enemy_shoot_state){
+case wait_Es:
+
+        temprows_E = temprow_lock_E;
+ 	 TempCols_E = 0xFFFFFFEF;
+        shootval_E = 0;
+  break;
+case shoot1_E:
+  TempCols_E = 0xFFFFFFDF;
+  break;
+case shoot2_E:
+  TempCols_E = 0xFFFFFFBF;
+  break;
+case shoot3_E:
+  TempCols_E = 0xFFFFFF7F;
+  break;
+case shoot4_E:
+  TempCols_E = 0xFFFFFEFF;
+  break;
+case shoot5_E:
+  TempCols_E = 0xFFFFFDFF;
+  break;
+case shoot6_E:
+  TempCols_E = 0xFFFFFBFF;
+  break;
+case shoot7_E:
+  TempCols_E = 0xFFFFF7FF;
+  break;
+case shoot8_E:
+  TempCols_E = 0xFFFFEFFF;
+  break;
+case shoot9_E:
+  TempCols_E = 0xFFFFDFFF;
+  break;
+case shoot10_E:
+  TempCols_E = 0xFFFFBFFF;
+  break;
+case shoot11_E:
+  TempCols_E = 0xFFFF7FFF;
+  break;
+case shoot12_E:
+  TempCols_E = 0xFFFEFFFF;
+  break;
+case shoot13_E:
+  TempCols_E = 0xFFFDFFFF;
+  break;
+case shoot14_E:
+  TempCols_E = 0xFFFBFFFF;
+  break;
+case shoot15_E:
+  TempCols_E = 0xFFFFFFFF;
+  shootval_E = 1;
+  temprows_E = temprow_E;
+  break;
+     case kill_game4:
+        break;
+}
+
+}
+
+//borrowed from LAB
+   void init_PWM() {
+
+   TCCR2 = (1 << WGM21) | (1 << COM20) | (1 << CS22);
+
+   }
+
+//borrowed from LAB
+   void set_PWM(double frequency) {
+
+   unsigned long temp;
+
+   if (frequency < 1)
+
+   OCR2 = 0;
+
+   else
+
+   OCR2 = (int)(16000000 / (128 * frequency)) - 1;
+   }
+
+//controls the player shooting
+void tick_Shoot(){
+switch(shoot_State){
+case -1:
+  shoot_State = wait_s;
+  break;
+case wait_s:
+temprows = temprow_lock;
+  if( shoot_g == 1 ){
+  shoot_State = shoot1;
+
+  }else{
+  shoot_State = wait_s;
+  }
+  break;
+case shoot1:
+shoot_State = shoot2;
+  break;
+case shoot2:
+shoot_State = shoot3;
+  break;
+case shoot3:
+shoot_State = shoot4;
+  break;
+case shoot4:
+shoot_State = shoot5;
+  break;
+case shoot5:
+shoot_State = shoot6;
+  break;
+case shoot6:
+shoot_State = shoot7;
+  break;
+case shoot7:
+shoot_State = shoot8;
+  break;
+case shoot8:
+shoot_State = shoot9;
+  break;
+case shoot9:
+shoot_State = shoot10;
+  break;
+case shoot10:
+shoot_State = shoot11;
+  break;
+case shoot11:
+shoot_State = shoot12;
+  break;
+case shoot12:
+shoot_State = shoot13;
+  break;
+case shoot13:
+shoot_State = shoot14;
+  break;
+case shoot14:
+shoot_State = shoot15;
+  break;
+case shoot15:
+  shoot_State = wait_s;
+  shoot_val_g = 1;
+  TempCols = 0xFFFFFFFF;
+  break;
+
+}
+switch(shoot_State){
+case wait_s:
+shoot_val_g = 0;
+        if(GetBit (PIND, 3)==0){
+           TempCols = 0xFFFFFFFF;
+        }
+
+  break;
+case shoot1:
+  TempCols = 0xFFFFBFFF;
+  break;
+case shoot2:
+  TempCols = 0xFFFFDFFF;
+  break;
+case shoot3:
+  TempCols = 0xFFFFEFFF;
+  break;
+case shoot4:
+  TempCols = 0xFFFFF7FF;
+  break;
+case shoot5:
+  TempCols = 0xFFFFFBFF;
+  break;
+case shoot6:
+  TempCols = 0xFFFFFDFf;
+  break;
+case shoot7:
+  TempCols = 0xFFFFFEFF;
+  break;
+case shoot8:
+  TempCols = 0xFFFFFF7F;
+  break;
+case shoot9:
+  TempCols = 0xFFFFFFBF;
+  break;
+case shoot10:
+  TempCols = 0xFFFFFFDF;
+  break;
+case shoot11:
+  TempCols = 0xFFFFFFEF;
+  break;
+case shoot12:
+  TempCols = 0xFFFFFFF7;
+  break;
+case shoot13:
+  TempCols = 0xFFFFFFFB;
+  break;
+case shoot14:
+  shoot_val_g = 1;
+  TempCols = 0xFFFFFFFD;
+  break;
+case shoot15:
+  shoot_val_g = 1;
+  TempCols = 0xFFFFFFFE;
+  temprows = TempRow;
+  break;
+default:
+  shoot_State = wait_s;
+  break;
+
+
+
+}
+}
+
+
+//regulates all of the enemy movement
+void tick_enemy_move(){
+
+switch(enemymovmtstate){
+case -1:
+  enemymovmtstate = wait_e;
+  break;
+case wait_e:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else if(GetBit(PIND, 3) == 0){
+  enemymovmtstate = gen_position;
+
+  }else{
+  enemymovmtstate = wait_e;
+  }
+  break;
+case gen_position:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else{
+  enemymovmtstate = start_movement;
+        }
+  break;
+  case start_movement:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else{
+  enemymovmtstate = value_check;
+  z = 0;
+        }
+  break;
+case value_check:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else if(z < 125){
+  enemymovmtstate = value_check;
+
+  }else{
+  enemymovmtstate = move;
+
+  z = 0;
+  }
+  break;
+case move:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else if(temprow_E == 0){
+  enemymovmtstate = gen_position2;
+           enemy_change1 = 1;
+
+
+  }else{
+  enemymovmtstate = start_movement;
+
+  }
+  break;
+case gen_position2:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else{
+  enemymovmtstate = start_movement2;
+        }
+  break;
+  case start_movement2:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else{
+  enemymovmtstate = value_check2;
+  z = 0;
+        }
+  break;
+case value_check2:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else if(z < 85){
+    enemymovmtstate = value_check2;
+
+  }else{
+    enemymovmtstate = move2;
+
+    z = 0;
+  }
+  break;
+case move2:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else if(temprow_E == 0){
+    enemymovmtstate = gen_position3;
+           enemy_change2 = 1;
+
+  }else{
+    enemymovmtstate = start_movement2;
+
+  }
+  break;
+case gen_position3:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else{
+  enemymovmtstate = start_movement3;
+        }
+  break;
+  case start_movement3:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else{
+           enemymovmtstate = value_check3;
+     z = 0;
+        }
+  break;
+case value_check3:
+        if(game_kill_flag){
+           enemymovmtstate = kill_game;
+        }else if(z < 50){
+    enemymovmtstate = value_check3;
+
+  }else{
+    enemymovmtstate = move3;
+
+    z = 0;
+  }
+  break;
+case move3:
+  if(temprow_E == 0 || game_kill_flag){
+    enemymovmtstate = kill_game;
+           game_kill_flag = 1;
+           temprow_E = 0x00;
+           tempCol_E = 0xFFFFFFFF;
+  }else{
+    enemymovmtstate = start_movement3;
+
+  }
+  break;
+     case kill_game:
+  if(system_reset){
+  enemymovmtstate = wait_e;
+  }else{
+  enemymovmtstate = kill_game;
+  }
+
+        break;
+
+
+
+}
+switch(enemymovmtstate){
+case wait_e:
+  if(GetBit (PIND,3)==0){
+    tempCol_E = 0xFFFFFFFF;
+    temprow_E = 00;
+  }
+
+  break;
+case gen_position:
+  tempCol_E = 0xFFFFFFEF;
+  temprow_E = 0xAA;
+  break;
+case start_movement:
+  break;
+case value_check:
+  ++z;
+  break;
+case move:
+  if(GetBit(temprow_E, 0) == 1){
+  temprow_E = temprow_E << 1;
+  }else{
+  temprow_E = temprow_E >> 1;
+  }
+  break;
+case gen_position2:
+  tempCol_E = 0xFFFFFFEF;
+  temprow_E = 0xCC;
+  break;
+case start_movement2:
+  break;
+case value_check2:
+  ++z;
+  break;
+case move2:
+  if(GetBit(temprow_E, 0) == 1){
+    temprow_E = temprow_E << 2;
+  }else{
+    temprow_E = temprow_E >> 1;
+  }
+  break;
+case gen_position3:
+  tempCol_E = 0xFFFFFFEF;
+  temprow_E = 0x3C;
+  break;
+case start_movement3:
+  break;
+case value_check3:
+  ++z;
+  break;
+case move3:
+         if(GetBit(temprow_E, 0) == 1){
+    temprow_E = temprow_E << 3;
+  }else{
+    temprow_E = temprow_E >> 1;
+  }
+  break;
+     case kill_game:
+        break;
+default:
+  enemymovmtstate = wait_e;
+  break;
+}
+}
+
+
+//checks to see if the player losews health
+void tickcheck_player(){
+switch(Check_Player_state){
+case -1:
+Check_Player_state = wait_butn2;
+break;
+case wait_butn2:
+if(GetBit(PIND, 3)==0){
+Check_Player_state = detect2;
+
+}else{
+Check_Player_state = wait_butn2;
+}
+break;
+case detect2:
+Check_Player_state = detect2;
+if(system_reset){
+Check_Player_state = wait_butn2;
+game_kill_flag = 0;
+health = 3;
+}
+break;
+}
+switch(Check_Player_state){
+case wait_butn2:
+  break;
+case detect2:
+
+if(shootval_E == 1){
+if(GetBit(temprows_E,0)&& GetBit(TempRow, 0)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+}else if(GetBit (TempRow, 1) && GetBit(temprows_E, 1)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+
+                 break;
+              }
+}else if(GetBit(TempRow, 2) && GetBit(temprows_E, 2)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+}else if(GetBit(TempRow,3) && GetBit(temprows_E, 3)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+}else if(GetBit(TempRow,4) && GetBit(temprows_E, 4)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+}else if(GetBit(TempRow, 5) && GetBit(temprows_E, 5)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+}else if(GetBit(TempRow,6) && GetBit(temprows_E, 6)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+}else if(GetBit(TempRow,7) && GetBit(temprows_E, 7)){
+--health;
+point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+}
+
+}
+
+
+}
+}
+
+//checks to see if the enemy has been hit
+void tick_check_enemy(){
+switch(enemy_shoot_detect_state){
+case -1:
+  enemy_shoot_detect_state = wait_Butn;
+  break;
+case wait_Butn:
+  if(GetBit(PIND, 3)==0){
+  enemy_shoot_detect_state = detect;
+
+  }else{
+  enemy_shoot_detect_state = wait_Butn;
+  }
+  break;
+case detect:
+  if(system_reset){
+  enemy_shoot_detect_state = wait_Butn;
+  game_kill_flag = 0;
+  points = 0;
+  }else{
+  enemy_shoot_detect_state = detect;
+  }
+  break;
+}
+switch(enemy_shoot_detect_state){
+case wait_Butn:
+  break;
+case detect:
+  if(shoot_val_g == 1){
+  if(GetBit(temprow_lock,0)&& GetBit(temprow_E, 0)){
+  temprow_E = temprow_E & 0xFE;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12 || health == 0){
+               game_kill_flag = 1;
+               break;
+              }
+  }else if(GetBit (temprow_lock, 1) && GetBit(temprow_E, 1)){
+  temprow_E = temprow_E & 0xFD;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+  }else if(GetBit(temprow_lock, 2) && GetBit(temprow_E, 2)){
+  temprow_E = temprow_E & 0xFB;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+  }else if(GetBit(temprow_lock,3) && GetBit(temprow_E, 3)){
+  temprow_E = temprow_E & 0xF7;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+  }else if(GetBit(temprow_lock,4) && GetBit(temprow_E, 4)){
+  temprow_E = temprow_E & 0xEF;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+  }else if(GetBit(temprow_lock, 5) && GetBit(temprow_E, 5)){
+  temprow_E = temprow_E & 0xDF;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12|| health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+  }else if(GetBit(temprow_lock,6) && GetBit(temprow_E, 6)){
+  temprow_E = temprow_E & 0xBF;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+  }else if(GetBit(temprow_lock,7) && GetBit(temprow_E, 7)){
+  temprow_E = temprow_E & 0x7F;
+  points += 1;
+  point_health_flag = 1;
+              if(points == 12 || health == 0){
+                 game_kill_flag = 1;
+                 break;
+              }
+  }
+
+}
+break;
+default:
+  enemy_shoot_detect_state = wait_Butn;
+  break;
+}
+}
+
+//borrowed from LAB
+void LCD_WriteCmdStart(unsigned char cmd) {
+*LCD_Ctrl = SetBit(*LCD_Ctrl,LCD_RS, 0);
+*LCD_Data = cmd;
+*LCD_Ctrl = SetBit(*LCD_Ctrl,LCD_E, 1);
+}
+//borrowed from LAB
+void LCD_WriteCmdEnd() {
+*LCD_Ctrl = SetBit(*LCD_Ctrl,LCD_E, 0);
+}
+//borrowed from LAB
+void LCD_WriteDataStart(unsigned char Data) {
+*LCD_Ctrl = SetBit(*LCD_Ctrl,LCD_RS,1);
+*LCD_Data = Data;
+*LCD_Ctrl = SetBit(*LCD_Ctrl,LCD_E, 1);
+}
+//borrowed from LAB
+void LCD_WriteDataEnd() {
+*LCD_Ctrl = SetBit(*LCD_Ctrl,LCD_E, 0);
+}
+//borrowed from LAB
+void LCD_Cursor(unsigned char column ) {
+if ( column < 8 ) {
+// IEEE change this value to 16
+LCD_WriteCmdStart(0x80+column);
+}else {
+LCD_WriteCmdStart(0xB8+column); // IEEE change this value to 0xBF+column
+}
+}
+//borrowed from lab made alterations
+void LI_Tick() {
+static unsigned char i;
+switch(LI_State) {
+case -1:
+LI_State = LI_Init1;
+break;
+case LI_Init1:
+LI_State = LI_Init2;
+i=0;
+break;
+case LI_Init2:
+if (i<10) { // Wait 100 ms after power up
+LI_State = LI_Init2;
+}
+else {
+LI_State = LI_Init3;
+}
+break;
+case LI_Init3:
+LI_State = LI_Init4;
+LCD_WriteCmdEnd();
+break;
+case LI_Init4:
+LI_State = LI_Init5;
+LCD_WriteCmdEnd();
+break;
+case LI_Init5:
+LI_State = LI_Init6;
+LCD_WriteCmdEnd();
+break;
+case LI_Init6:
+LI_State = LI_WaitDisplayString;
+LCD_WriteCmdEnd();
+break;
+//////////////////////////////////////////////
+case LI_WaitDisplayString:
+if (!LCD_go_g) {
+LI_State = LI_WaitDisplayString;
+}
+else if (LCD_go_g) {
+LCD_rdy_g = 0;
+LI_State = LI_Clr;
+}
+break;
+case LI_Clr:
+LI_State = LI_PositionCursor;
+LCD_WriteCmdEnd();
+i=0;
+break;
+case LI_PositionCursor:
+LI_State = LI_DisplayChar;
+LCD_WriteCmdEnd();
+break;
+case LI_DisplayChar:
+if (i<16) {
+LI_State = LI_PositionCursor;
+LCD_WriteDataEnd();
+i++;
+}
+else {
+LI_State = LI_WaitGo0;
+LCD_WriteDataEnd();
+}
+break;
+case LI_WaitGo0:
+if (!LCD_go_g) {
+LI_State = LI_WaitDisplayString;
+}
+else if (LCD_go_g) {
+LI_State = LI_WaitGo0;
+}
+break;
+default:
+LI_State = LI_Init1;
+} // Transitions
+
+switch(LI_State) { // State actions
+case LI_Init1:
+LCD_rdy_g = 0;
+break;
+case LI_Init2:
+i++; // Waiting after power up
+break;
+case LI_Init3:
+LCD_WriteCmdStart(0x38);
+break;
+case LI_Init4:
+LCD_WriteCmdStart(0x06);
+break;
+case LI_Init5:
+LCD_WriteCmdStart(0x0F);
+break;
+case LI_Init6:
+LCD_WriteCmdStart(0x01); // Clear
+break;
+//////////////////////////////////////////////
+case LI_WaitDisplayString:
+LCD_rdy_g = 1;
+break;
+case LI_Clr:
+LCD_WriteCmdStart(0x01);
+break;
+case LI_PositionCursor:
+LCD_Cursor(i);
+break;
+case LI_DisplayChar:
+LCD_WriteDataStart(LCD_string_g[i]);
+break;
+case LI_WaitGo0:
+break;
+default:
+break;
+} // State actions
+}
+//borrowed form lab w/alterations
+void LT_Tick() {
+static unsigned short j;
+static unsigned char i, x, c;
+switch(LT_State) {
+case -1:
+LT_State = LT_s0;
+break;
+case LT_s0:
+LT_State = LT_WaitLcdRdy;
+break;
+case LT_WaitLcdRdy:
+if (!LCD_rdy_g) {
+LT_State = LT_WaitLcdRdy;
+}
+else if (LCD_rdy_g) {
+LT_State = LT_WaitButton;
+}
+break;
+case LT_WaitButton:
+if (GetBit(PIND,3)==1) {
+LT_State = LT_WaitButton;
+}
+else if (GetBit(PIND,3)==0) { // Button active low
+LT_State = LT_FillAndDispString;
+}
+break;
+case LT_FillAndDispString:
+LT_State = LT_WaitLcdRdy2;
+break;
+case LT_WaitLcdRdy2:
+if (!LCD_rdy_g && !point_health_flag) {
+LT_State = LT_WaitLcdRdy2;
+}
+else if (LCD_rdy_g && point_health_flag) {
+LT_State = LT_FillAndDispString2;
+point_health_flag = 0;
+}
+break;
+case LT_FillAndDispString2:
+if(points == 12){
+LT_State = LT_WaitLcdRdy3;
+}else if(health == 0){
+LT_State = LT_WaitLcdRdy4;
+
+}else{
+LT_State = LT_WaitLcdRdy2;
+}
+
+break;
+case LT_WaitLcdRdy3:
+if (!LCD_rdy_g ) {
+LT_State = LT_WaitLcdRdy3;
+}
+else if (LCD_rdy_g) {
+LT_State = LT_FillAndDispString3;
+}
+break;
+case LT_FillAndDispString3:
+if(system_reset){
+LT_State = LT_WaitButton;
+}else{
+LT_State = LT_WaitLcdRdy3;
+}
+
+break;
+case LT_WaitLcdRdy4:
+if (!LCD_rdy_g) {
+LT_State = LT_WaitLcdRdy4;
+}
+else if (LCD_rdy_g) {
+LT_State = LT_FillAndDispString4;
+}
+break;
+case LT_FillAndDispString4:
+if(system_reset){
+LT_State = LT_WaitButton;
+}else{
+LT_State = LT_WaitLcdRdy4;
+}
+
+break;
+default:
+LT_State = LT_s0;
+}
+
+switch(LT_State) { // State actions
+case LT_s0:
+LCD_go_g=0;
+
+break;
+case LT_WaitLcdRdy:
+break;
+case LT_WaitButton:
+strcpy(LCD_string_g, "  Press Start   "); // Init, but never seen, shows use of strcpy though
+LCD_go_g = 1; // Display string
+break;
+case LT_FillAndDispString:
+LCD_go_g = 0;
+break;
+case LT_WaitLcdRdy2:
+LCD_go_g = 0;
+break;
+case LT_FillAndDispString2:
+LCD_string_g[0] = 'P';
+LCD_string_g[1] = 't';
+LCD_string_g[2] = 's';
+LCD_string_g[3] = ':';
+LCD_string_g[4] = ' ';
+if(points == 10){
+  LCD_string_g[5] = '1';
+  LCD_string_g[6] = '0';
+}else if(points == 11){
+  LCD_string_g[5] = '1';
+LCD_string_g[6] = '1';
+}else if(points == 12){
+  LCD_string_g[5] = '1';
+  LCD_string_g[6] = '2';
+}else if(points == 13){
+LCD_string_g[5] = '1';
+LCD_string_g[6] = '3';
+}else if(points  == 14){
+LCD_string_g[5] = '1';
+LCD_string_g[6] = '4';
+}else if(points == 15){
+LCD_string_g[5] = '1';
+LCD_string_g[6] = '5';
+}else{
+LCD_string_g[5] = ' ';
+LCD_string_g[6] = (char)(((int)'0') + (points));
+}
+LCD_string_g[7] = ' ';
+LCD_string_g[8] = 'H';
+LCD_string_g[9] = 'l';
+LCD_string_g[10] = 't';
+LCD_string_g[11] = 'h';
+LCD_string_g[12] = ':';
+LCD_string_g[13] = ' ';
+LCD_string_g[14] = (char)(((int)'0')+health);
+LCD_string_g[15] = ' ';
+LCD_string_g[16] = '\0';
+
+LCD_go_g = 1; // Display string
+break;
+case LT_WaitLcdRdy3:
+LCD_go_g = 0;
+break;
+case LT_FillAndDispString3:
+strcpy(LCD_string_g, "  YOU WIN!!!    "); // Init, but never seen, shows use of strcpy though
+LCD_go_g = 1; // Display string
+break;
+case LT_WaitLcdRdy4:
+LCD_go_g = 0;
+break;
+case LT_FillAndDispString4:
+strcpy(LCD_string_g, "  You LOSE      "); // Init, but never seen, shows use of strcpy though
+LCD_go_g = 1; // Display string
+break;
+default:
+break;
+} // State actions
+}
+
+
+//borrowed from LAB w/alterations
+void transmit_data(unsigned long data) {
+
+int t;
+
+for (t = 0; t < 16 ; ++t) {
+
+// Sets SRCLR to 1 allowing data to be set
+
+// Also clears SRCLK in preparation of sending data
+
+PORTC = 0x08;
+
+// set SER = next bit of data to be sent.
+
+PORTC |= ((data >> t) & 0x01);
+
+// set SRCLK = 1. Rising edge shifts next bit of data into the shift register
+
+PORTC |= 0x02;
+
+}
+
+// set RCLK = 1. Rising edge copies data from �Shift� register to �Storage� register
+
+PORTC |= 0x04;
+
+// clears all lines in preparation of a new transmission
+
+PORTC = 0x00;
+
+}
+//borrowed from LAB w/alterations
+void transmit_data1(unsigned long data1) {
+data1<<4;
+
+int t1;
+
+for (t1 = 0; t1 < 16 ; ++t1) {
+
+// Sets SRCLR to 1 allowing data to be set
+
+// Also clears SRCLK in preparation of sending data
+
+PORTC = 0x80;
+
+// set SER = next bit of data to be sent.
+
+PORTC |= ((data1 >> t1) & 0x10);
+
+// set SRCLK = 1. Rising edge shifts next bit of data into the shift register
+
+PORTC |= 0x20;
+
+}
+
+// set RCLK = 1. Rising edge copies data from �Shift� register to �Storage� register
+
+PORTC |= 0x40;
+
+// clears all lines in preparation of a new transmission
+
+PORTC = 0x00;
+
+}
+//borrowed from LAB w/alterations
+void transmit_data2(unsigned char data2) {
+
+int t2;
+
+for (t2 = 0; t2 < 8 ; ++t2) {
+
+
+PORTB = 0x08;
+
+
+PORTB |= ((data2 >> t2) & 0x01);
+
+
+PORTB |= 0x02;
+
+}
+
+PORTB |= 0x04;
+
+PORTB = 0x00;
+
+}
+//borrowed from LAB w/alterations
+void transmit_data_FOR_BOSS( volatile unsigned char datarow1[], volatile unsigned long datacol1[]) {
+
+
+
+datacol1[t4] = datacol1[t] << 4;
+for(d = 0; d < 16; d++){
+
+PORTC = 0x80;
+
+
+PORTC |= ((datacol1[t] >> d) & 0x10);
+
+
+PORTC |= 0x20;
+}
+
+PORTC |= 0x40;
+
+PORTC = 0x00;
+
+
+
+
+for(t5 = 0; t5<8; ++t5){
+
+
+
+
+PORTB = 0x08;
+
+// set SER = next bit of data to be sent.
+
+PORTB |= ((datarow1[t] >> t5) & 0x01) ;
+
+// set SRCLK = 1. Rising edge shifts next bit of data into the shift register
+
+PORTB |= 0x02;
+// set RCLK = 1. Rising edge copies data from �Shift� register to �Storage� register
+
+
+
+}
+
+PORTB |= 0x04;
+
+// clears all lines in preparation of a new transmission
+
+PORTB = 0x00;
+}
+
+//borrowed from LAB w/alterations
+void transmit_data_FOR_DISPLAY( volatile unsigned char datarow[], volatile unsigned long datacol[]) {
+
+
+
+
+for(x = 0; x < 16; x++){
+
+PORTC = 0x08;
+
+PORTC |= ((datacol[t] >> x) & 0x01);
+
+
+PORTC |= 0x02;
+}
+
+PORTC |= 0x04;
+
+
+PORTC = 0x00;
+
+
+for(t3 = 0; t3<8; ++t3){
+
+
+
+
+PORTB = 0x08;
+
+
+PORTB |= ((datarow[t] >> t3) & 0x01) ;
+
+PORTB |= 0x02;
+
+}
+
+PORTB |= 0x04;
+
+PORTB = 0x00;
+}
+
+typedef struct _task {
+signed char state; //Task's current state
+unsigned long int period; //Task period
+unsigned long int elapsedTime; //Time elapsed since last task tick
+int (*TickFct)(int); //Task tick function
+} task;
+
+
+int main(void)
+{
+  DDRD = 0xF0; PORTD = 0x0F;
+  DDRC = 0xFF; PORTC = 0x00;
+  DDRB = 0xFF; PORTB = 0x00;
+  DDRA = 0xFF; PORTA = 0x00;
+transmit_data2(0x00);
+transmit_data1(0xFFFFFFFF);
+transmit_data(0xFFFFFFF);
+
+volatile unsigned char cnt = 0;
+unsigned long int tickTime = 1;
+static task task1, task2, task3, task4, task5, task6, task7, task8, task9, task10, task11, task12;
+task *tasks[] = { &task1, &task2, &task3, &task4, &task5, &task6, &task7, &task8, &task9, &task10, &task11, &task12};
+const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
+// Task 1
+task1.state = -1;//Task initial state.
+task1.period = 1;//Task Period.
+task1.elapsedTime = 1;//Task current elapsed time.
+task1.TickFct = &tick_LED;//Function pointer for the tick.
+
+// Task 2
+task2.state = -1;//Task initial state.
+task2.period = 4;//Task Period.
+task2.elapsedTime = 4;//Task current elapsed time.
+task2.TickFct = &LI_Tick;//Function pointer for the tick.
+
+task3.state = -1;//Task initial state.
+task3.period = 4;//Task Period.
+task3.elapsedTime = 4;//Task current elapsed time.
+task3.TickFct = &LT_Tick;//Function pointer for the tick.
+
+task4.state = -1;//Task initial state.
+task4.period = 50;//Task Period.
+task4.elapsedTime = 50;//Task current elapsed time.
+task4.TickFct = &Tick_Move;//Function pointer for the tick.
+
+task5.state = -1;//Task initial state.
+task5.period = 10;//Task Period.
+task5.elapsedTime = 10;//Task current elapsed time.
+task5.TickFct = &tick_enemy_move;//Function pointer for the tick.
+
+task6.state = -1;//Task initial state.
+task6.period = 20;//Task Period.
+task6.elapsedTime = 20;//Task current elapsed time.
+task6.TickFct = &tick_Shoot;//Function pointer for the tick.
+
+task7.state = -1;//Task initial state.
+task7.period = 50;//Task Period.
+task7.elapsedTime = 50;//Task current elapsed time.
+task7.TickFct = &tick_enemy_shot;//Function pointer for the tick.
+
+task8.state = -1;//Task initial state.
+task8.period = 30;//Task Period.
+task8.elapsedTime = 30;//Task current elapsed time.
+task8.TickFct = &tick_check_enemy;//Function pointer for the tick.
+
+task9.state = -1;//Task initial state.
+task9.period = 50;//Task Period.
+task9.elapsedTime = 50;//Task current elapsed time.
+task9.TickFct = &tickcheck_player;//Function pointer for the tick.
+
+task10.state = -1;//Task initial state.
+task10.period = 1;//Task Period.
+task10.elapsedTime = 1;//Task current elapsed time.
+task10.TickFct = &music_tick;//Function pointer for the tick.
+
+task11.state = -1;//Task initial state.
+task11.period = 50;//Task Period.
+task11.elapsedTime = 50;//Task current elapsed time.
+task11.TickFct = &tick_enemy_Gen_Shot;//Function pointer for the tick.
+
+task12.state = -1;//Task initial state.
+task12.period = 1;//Task Period.
+task12.elapsedTime = 1;//Task current elapsed time.
+task12.TickFct = &tick_SoundFX;//Function pointer for the tick.
+
+       TimerSet(1);
+       TimerOn();
+init_PWM();
+
+   while(1)
+   {
+
+set_PWM(freq);
+for ( cnt = 0; cnt < numTasks; cnt++ ) {
+if ( tasks[cnt]->elapsedTime == tasks[cnt]->period ) {
+tasks[cnt]->state = tasks[cnt]->TickFct(tasks[cnt]->state);
+tasks[cnt]->elapsedTime = 0;
+}
+tasks[cnt]->elapsedTime += 1;
+}
+
+
+while (!TimerFlag);
+TimerFlag = 0;
+   }
+}
